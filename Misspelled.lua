@@ -1,4 +1,4 @@
-﻿--[[--------------------------------------------------------------------------
+--[[--------------------------------------------------------------------------
   Developed by Nathan Pieper - nrpieper (@) gmail (dot) com
   Misspelled is an interactive chat text spell checker for World of Warcraft
 
@@ -11,6 +11,9 @@
   Paul Welter & NetSpell: http://www.loresoft.com/projects/netspell
   Metaphone Algorithm http://aspell.net/metaphone/
   Edit Distance Algorithm http://en.wikipedia.org/wiki/Levenshtein_distance
+  
+  Updated and maintained by Tildemancer - please direct all questions to the relevant Github!
+  https://github.com/Tildemancer/wow-misspelled/edit/main/Misspelled.lua
 
 --------------------------------------------------------------------------]]--
 
@@ -143,6 +146,140 @@ local MaxColorCodes = 12       --The max amount of color codes we will add to th
 local Misspelled_Saved_CTL_SendChatMessage
 local Misspelled_CTL_hookedversion=0
 
+--[[--------------------------------------------------------------------------
+  Midnight (12.0+) taint guard
+
+  Blizzard restricts chat sending while an addon restriction is active: boss
+  encounters, Mythic+, rated PvP, and communication-restricted maps.  Any
+  tainted code on the send path causes the outgoing message to be blocked
+  outright rather than merely erroring.  There are two such paths here:
+
+    1. RawHook'ing C_ChatInfo.SendChatMessage replaced a secure C function with
+       a tainted Lua function *permanently*, so every send during an encounter
+       was blocked.  12.0 added ChatFrameEditBoxMixin:OnPreSendText() -> the
+       "ChatFrame.OnEditBoxPreSendText" EventRegistry event specifically so
+       addons can do final text edits without sitting on the send path.
+
+    2. EditBox:SetText() called while restricted taints the send that follows.
+
+  So while restricted, Misspelled goes silent: no highlighting is added, no
+  SetText is called, and nothing is on the send path.
+--------------------------------------------------------------------------]]--
+
+--Set true to also pause spell checking during ordinary combat.  Off by default
+--because the chat restrictions are encounter-scoped, not all-combat.  Turn on
+--with /run Misspelled_StrictCombatGuard = true if you still see blocked chat.
+Misspelled_StrictCombatGuard = Misspelled_StrictCombatGuard or false
+
+local MISSPELLED_IS_MODERN = false
+do
+	local ok, _, _, _, iface = pcall(GetBuildInfo)
+	MISSPELLED_IS_MODERN = ok and (tonumber(iface) or 0) >= 120000
+end
+
+--Restriction types that gate chat.  Built defensively; missing fields skipped.
+local MISSPELLED_CHAT_RESTRICTIONS = {}
+do
+	local E = Enum and Enum.AddOnRestrictionType
+	if E then
+		for _, name in ipairs({ "Chat", "Encounter", "ChallengeMode", "PvPMatch" }) do
+			if E[name] ~= nil then
+				MISSPELLED_CHAT_RESTRICTIONS[#MISSPELLED_CHAT_RESTRICTIONS + 1] = E[name]
+			end
+		end
+	end
+end
+
+local MisspelledWarnedRestricted = false
+
+--True when we must not touch the chat edit box or the chat send path.
+--Every probe fails closed: if a check errors, assume restricted.
+function Misspelled:IsChatRestricted()
+	if Misspelled_StrictCombatGuard and InCombatLockdown and InCombatLockdown() then
+		return true
+	end
+
+	local lockdown = C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
+	if type(lockdown) == "function" then
+		local ok, active = pcall(lockdown)
+		if not ok then return true end
+		if active then return true end
+	end
+
+	local isActive = C_RestrictedActions and C_RestrictedActions.IsAddOnRestrictionActive
+	if type(isActive) == "function" then
+		for i = 1, #MISSPELLED_CHAT_RESTRICTIONS do
+			local ok, active = pcall(isActive, MISSPELLED_CHAT_RESTRICTIONS[i])
+			if not ok then return true end
+			if active then return true end
+		end
+	end
+
+	return false
+end
+
+--12.0+ replacement for the SendChatMessage hook.  Registered with Misspelled as
+--the callback owner, so the signature is (self, editBox).  Fires after
+--ParseText() but before GetText() is read for the send, so SetText() here still
+--affects the outgoing message.
+function Misspelled:OnEditBoxPreSendText(editBox)
+	if not editBox or not editBox.GetText then return end
+
+	--Touching the box while restricted taints the send and blocks the message.
+	--Highlighting is not added while restricted, so there is normally nothing
+	--here to strip.
+	if Misspelled:IsChatRestricted() then return end
+
+	local text = editBox:GetText()
+	if type(text) ~= "string" or text == "" then return end
+
+	local cleaned = Misspelled:RemoveHighlighting(text)
+	if cleaned ~= text then
+		SkipOnTextChanged = true
+		editBox:SetText(cleaned)
+	end
+end
+
+--If the player was mid-compose when a restriction started, highlighting is
+--still sitting in the box.  Strip it once, now, so the rest of the encounter is
+--clean.  This one SetText happens while restricted and may cost the player that
+--single in-progress message.
+function Misspelled:StripEditBoxHighlighting()
+	local n = _G.NUM_CHAT_WINDOWS or 10
+	local stripped = false
+	for i = 1, n do
+		local editbox = _G["ChatFrame" .. i .. "EditBox"]
+		if editbox and editbox.GetText then
+			local text = editbox:GetText()
+			if type(text) == "string" and text ~= "" then
+				local cleaned = Misspelled:RemoveHighlighting(text)
+				if cleaned ~= text then
+					SkipOnTextChanged = true
+					editbox:SetText(cleaned)
+					stripped = true
+				end
+			end
+		end
+	end
+	return stripped
+end
+
+function Misspelled:ADDON_RESTRICTION_STATE_CHANGED()
+	--C_RestrictedActions.IsAddOnRestrictionActive always returns false during
+	--dispatch of this event, so the state has to be re-read next frame.
+	C_Timer.After(0, function()
+		if not Misspelled:IsChatRestricted() then
+			MisspelledWarnedRestricted = false
+			return
+		end
+		if Misspelled:StripEditBoxHighlighting() and not MisspelledWarnedRestricted then
+			MisspelledWarnedRestricted = true
+			print("|cff33ff99Misspelled|r: chat is restricted here, spell checking paused. "
+				.. "If your in-progress message will not send, press Escape and retype it.")
+		end
+	end)
+end
+
 --Output debug messages to the DevTool addon (https://github.com/brittyazel/DevTool)
 function Misspelled:AddToInspector(data, strName)
 	if DevTool and self.DEBUG then
@@ -243,13 +380,22 @@ function Misspelled:OnInitialize()
 		Misspelled:WireUpEditBox(ChatFrameEditBox)
 	end
 
-	-- hooks for removing any misspelled word highlighting in the text before the chat message is sent
-	-- The Wow client will disconnect if you attempt to send a color tags in a chat message.
-	if C_ChatInfo and C_ChatInfo.SendChatMessage then
+	-- Remove misspelled word highlighting before the chat message is sent.
+	--
+	-- On 12.0+ do NOT replace C_ChatInfo.SendChatMessage.  That puts a tainted
+	-- Lua function permanently on the send path, which blocks every message
+	-- sent during an encounter. Blizzard added ChatFrameEditBoxMixin:OnPreSendText() for this.
+	if MISSPELLED_IS_MODERN and EventRegistry then
+		EventRegistry:RegisterCallback("ChatFrame.OnEditBoxPreSendText",
+			Misspelled.OnEditBoxPreSendText, Misspelled)
+	elseif C_ChatInfo and C_ChatInfo.SendChatMessage then
 		Misspelled:RawHook(C_ChatInfo, "SendChatMessage", Misspelled.SendChatMessage, true)
 	else
 		Misspelled:RawHook("SendChatMessage", Misspelled.SendChatMessage, true) -- For non-retail game clients
 	end
+
+	-- Re-check restriction state when it changes so we can pause cleanly.
+	pcall(function() Misspelled:RegisterEvent("ADDON_RESTRICTION_STATE_CHANGED") end)
 end
 
 
@@ -354,6 +500,9 @@ function Misspelled.EditBox_OnTextChanged(editbox)
 		return
 	end
 
+	--Midnight: never rewrite the chat edit box while chat is restricted.
+	if Misspelled:IsChatRestricted() then return end
+
 	--print("Editbox name:", editbox:GetName())
 
 	--Load the guild roster if needed
@@ -427,10 +576,18 @@ function Misspelled.EditBox_OnEnterPressed(editbox)
 	RightClickedWord = nil
 	WordLocations[editbox:GetName()] = {}
 
-	--before message is sent, remove and misspelled highlighting
-	local cleanedChatMessage = Misspelled:RemoveHighlighting(editbox:GetText())
+	--Midnight: a SetText here taints the send that follows, so skip it while
+	--restricted.  Nothing is highlighted under restriction anyway.
+	if Misspelled:IsChatRestricted() then return end
+
+	--before message is sent, remove any misspelled highlighting
+	local text = editbox:GetText()
+	local cleanedChatMessage = Misspelled:RemoveHighlighting(text)
 	WordLocations[editbox:GetName()] = {}
-	editbox:SetText(cleanedChatMessage)
+	if cleanedChatMessage ~= text then
+		SkipOnTextChanged = true
+		editbox:SetText(cleanedChatMessage)
+	end
 end
 
 
@@ -439,6 +596,9 @@ end
 --We should keep track of the current edit cursor position,
 --so we can report it's new position after highlighting.
 function Misspelled:SpellCheckChat(editbox)
+	--Midnight: highlighting rewrites the edit box, which taints the next send.
+	if Misspelled:IsChatRestricted() then return end
+
 	local editboxText = editbox:GetText()
 
 	if #editboxText < 2 then return end
@@ -551,24 +711,9 @@ function Misspelled:CheckLine(text, editbox)
 	if text == nil then return end
 	if #text == 0 then return end
 
-	--Find if there are any WoW UI escape sequences on this line, and replace them with # chars, 
-	--so they don't match as words in the next stage of parsing and get ignored for spellchecking.
-	--ref: https://warcraft.wiki.gg/wiki/UI_escape_sequences
-	-- |cn[^:]+:.*|r          -- Global Colors text (new in 11.1.5 - |cncolorname:text|r)
-	-- |cnIQ%d:.*|r           -- Item Quality Colors (new in 11.1.5 - |cnIQn:text|r
-	-- |[Cc]%x-|H.+|h.+|h|r   -- Hex color coded text with links (format: |cffxxxxxx|Htype:payload|h[text]|h|r ) https://warcraft.wiki.gg/wiki/Hyperlinks
-	-- |cn[^:]+:|H.+|h.+h|r   -- Global Colors / Custom item color links (new in 11.1.5 - |cncolorname:text|r) https://warcraft.wiki.gg/wiki/UI_escape_sequences#:~:text=back%20to%20white-,Global%20Colors,-%7Ccncolorname%3A
-	-- |H.*|h                 -- Links
-	-- |T.*|t                 -- Textures
-	-- |A.*|a                 -- Texture Atlas
-	-- {.-}                   -- Raid target icons
-	-- |n                     -- newline character
+	-- Find if there are any WoW UI escape sequences on this line, and replace them with # chars
+	-- so they don't match as words and get ignored for spellchecking.
 	local newText = text
-	-- newText = string_gsub(newText, "(|[Cc]%x-|H.-|h.-|h|r)", function(x) return string_rep("#", #x) end)
-	-- newText = string_gsub(newText, "(|H.*|h)", function(x) return string_rep("#", #x) end)
-	-- newText = string_gsub(newText, "(|T.*|t)", function(x) return string_rep("#", #x) end)
-	-- newText = string_gsub(newText, "({.-})", function(x) return string_rep("#", #x) end)
-	-- newText = string_gsub(newText, "(|n)", function(x) return string_rep("#", #x) end)
 
 	local WowTextMarkupEscapes = {
 		["(|cn[^:]+:.-|r)"] = "#",        -- Global Colors text
@@ -582,25 +727,33 @@ function Misspelled:CheckLine(text, editbox)
 	}
 
 	for k, v in pairs(WowTextMarkupEscapes) do
-        newText = string_gsub(newText, k, function(x) return string_rep(v, #x) end)
-    end
+		newText = string_gsub(newText, k, function(x) return string_rep(v, #x) end)
+	end
 
-	--March through the text, finding the words, record there start & end positions, and spell check status
-	local patt = "[A-Za-z0-9_'À-ÿœæŒÆ]+"
-	local matchPosStart
-	local matchPosEnd
+	-- OPTION A:
+	-- For parsing only, replace any non-ASCII bytes with spaces so UTF-8 multibyte characters
+	-- can't be split into fake "words" (e.g. —, ½, ♥, etc). This keeps indices aligned.
+	local parseText = newText
+	parseText = string_gsub(parseText, "[\128-\255]", " ")
 
-	matchPosStart, matchPosEnd = string_find(newText, patt)
+	-- ASCII-only word pattern (safe with the parseText above)
+	local patt = "[A-Za-z0-9_']+"
+
+	-- March through the text, finding the words, record their start & end positions, and spell check status
+	local matchPosStart, matchPosEnd = string_find(parseText, patt)
 
 	local x = 0
 	local word
 	local correct
+
 	while matchPosStart ~= nil do
+		-- IMPORTANT: take the "word" from the ORIGINAL masked text (newText),
+		-- not from parseText, so we preserve exact original characters for storage/highlighting.
 		word = string_sub(newText, matchPosStart, matchPosEnd)
 
-		--ignore all uppercase words
+		-- ignore all uppercase words
 		if word ~= string_upper(word) then
-			--ignore words with numbers in them
+			-- ignore words with numbers in them
 			if string_match(word, "[%d]") == nil then
 				x = x + 1
 				WordLocations[editbox:GetName()][x] = {["Word"] = word, ["StartPos"] = matchPosStart, ["EndPos"] = matchPosEnd}
@@ -608,42 +761,31 @@ function Misspelled:CheckLine(text, editbox)
 				if WordCache[word] == nil then
 					correct = false
 
-					--Ignore words in all upper case
+					-- Ignore words in all upper case
 					if word == string_upper(word) then
 						correct = true
 					end
 
-					--See if the dictionary contains the word
+					-- See if the dictionary contains the word
 					if correct == false then
 						correct = WordDict:Contains(word)
 					end
 
-					--Try the lower case version of the word
+					-- Try the lower case version of the word
 					if correct == false then
 						correct = WordDict:Contains(string_lower(word))
 					end
 
-					--Cache the results
-					WordCache[word] = {["Correct"] = correct} --, ["Suggestions"] = {}}
+					-- Cache the results
+					WordCache[word] = {["Correct"] = correct}
 					WordCacheCount = WordCacheCount + 1
-					--Changed to delay searching for suggestions until someone right-clicks on a misspelled word.
-					--Adding UTF8 support slows the suggestion generation.
---~ 					if correct == false then
---~ 						local suggestions = {}
---~ 						suggestions = WordDict:Suggest(word)
---~ 						if #suggestions > 0 then
---~ 							WordCache[word].Suggestions = suggestions
---~ 						end
---~ 					end
 				end
 			end
 		end
 
-		matchPosStart, matchPosEnd = string_find(newText, patt, matchPosEnd+1)
+		matchPosStart, matchPosEnd = string_find(parseText, patt, matchPosEnd + 1)
 	end
 end
-
-
 
 --Return a string where the highlighting has been removed from any misspelled words,
 --with the goal to not change or destroy any other UI escaped sequences present in the chat message,
@@ -1047,6 +1189,10 @@ end
 --
 -------------------------------------------------------------------------
 function Misspelled:OnMouseUp(editbox, button)
+	--Midnight: applying a suggestion would rewrite the edit box, so do not offer
+	--the menu while chat is restricted.
+	if Misspelled:IsChatRestricted() then return end
+
 	if button == "RightButton" then
 		local badWordFound = false
 		CloseDropDownMenus()
@@ -1237,6 +1383,9 @@ function SuggestionsFrame_Click(value, editbox)
 
 		--Note: if the replacement word is a different length, then the WordLocations will be messed up.
 	end
+
+	--Midnight backstop: refuse rather than silently blocking the player's chat.
+	if Misspelled:IsChatRestricted() then return end
 
 	editbox:SetText(newText)
 
