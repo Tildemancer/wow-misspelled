@@ -1,28 +1,20 @@
-﻿## Interface: 120000, 120001
-## Interface-Mainline: 120000, 120001
+## Interface: 120010, 120007
 ## Interface-Classic: 11508
-## Interface-Wrath: 30405
-## Interface-Cata: 40402
 ## Interface-Mists: 50503
 
-## X-Curse-Project-ID: 19114
-## X-Curse-Project-Name: Misspelled - Chat Spellchecker
-## X-Curse-Repository-ID: wow/misspelled/mainline
-## X-Website: https://www.curseforge.com/wow/addons/misspelled
-## X-WoWI-ID: 13493
-
-## Title: Misspelled
+## Title: TildeMisspelled
 ## Version: @project-version@
-## Author: Nate (Nathan Pieper)
-## Notes: Misspelled watches your chat, flagging missplled words, and offering correctly spelled suggestions.
-## eMail: nrpieper@gmail.com
-## X-Email: nrpieper@gmail.com
+## Author: Tildemancer
+## Notes: Chat spell checker. Independent fork of Misspelled by Nathan Pieper, updated for Midnight addon restrictions.
+## X-Credits: Original addon "Misspelled" by Nate (Nathan Pieper) — https://github.com/nrpieper/wow-misspelled
+## X-License: GPL-2.0-only
+## X-Website: to be filled
+## Category-enUS: Chat
 ## X-Category: Chat
 ## DefaultState: Enabled
 ## OptionalDeps: LibStub, CallbackHandler-1.0, Ace3
 ## X-Embeds: LibStub, CallbackHandler-1.0, Ace3
 ## SavedVariables: Misspelled_DB
-
 
 embeds.xml
 Localization\Includes.xml
