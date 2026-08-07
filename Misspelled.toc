@@ -2,8 +2,8 @@
 ## Interface-Classic: 11508
 ## Interface-Mists: 50503
 
-## Title: TildeMisspelled
-## Version: @project-version@
+## Title: Misspelled
+## Version: 1
 ## Author: Tildemancer
 ## Notes: Chat spell checker. Independent fork of Misspelled by Nathan Pieper, updated for Midnight addon restrictions.
 ## X-Credits: Original addon "Misspelled" by Nate (Nathan Pieper) — https://github.com/nrpieper/wow-misspelled
