@@ -48,26 +48,3 @@ jobs:
         uses: BigWigsMods/packager@master
         with:
           args: -g retail
-      # Release - Vanilla Classic
-      - name: Package and release for Classic
-        uses: BigWigsMods/packager@master
-        with:
-          args: -g classic
-
-      # Release - Wrath
-      - name: Package and release for Wrath
-        uses: BigWigsMods/packager@master
-        with:
-          args: -g wrath
-
-      # Release - Cata
-      - name: Package and release for Cata
-        uses: BigWigsMods/packager@master
-        with:
-          args: -g cata
-
-      # Release - Mists
-      - name: Package and release for Mists
-        uses: BigWigsMods/packager@master
-        with:
-          args: -g mists

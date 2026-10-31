@@ -1,6 +1,4 @@
 ## Interface: 120100, 120105, 120107
-## Interface-Classic: 11508
-## Interface-Mists: 50503
 
 ## Title: TildeMisspelled
 ## Version: 1
