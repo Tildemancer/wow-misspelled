@@ -1,7 +1,7 @@
 ## Interface: 120100, 120105, 120107
 
 ## Title: TildeMisspelled
-## Version: 1
+## Version: @project-version@
 ## Author: Tildemancer
 ## Notes: Chat spell checker. Independent fork of Misspelled by Nathan Pieper, updated for Midnight addon restrictions.
 ## X-Credits: Original addon "Misspelled" by Nate (Nathan Pieper) — https://github.com/nrpieper/wow-misspelled
