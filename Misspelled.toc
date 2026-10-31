@@ -6,7 +6,7 @@
 ## Notes: Chat spell checker. Independent fork of Misspelled by Nathan Pieper, updated for Midnight addon restrictions.
 ## X-Credits: Original addon "Misspelled" by Nate (Nathan Pieper) — https://github.com/nrpieper/wow-misspelled
 ## X-License: GPL-2.0-only
-## X-Website: to be filled
+## X-Website: https://www.curseforge.com/wow/addons/tildes-misspelled-fork
 ## X-Curse-Project-ID: 1643785
 ## Category-enUS: Chat
 ## X-Category: Chat
